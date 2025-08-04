@@ -7,7 +7,7 @@ from email.mime.multipart import MIMEMultipart
 
 BASE_URL = "https://mymarketnews.ams.usda.gov/filerepo/reports?field_slug_id_value=3661&page={}"
 NUM_PAGES = 5
-AZURE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=busercapstone;AccountKey=HMytooukQTL1Dt934A2jREt/+j7M/PpANxfIkg9LcxDH6ETB3BdD2beIInIBSCtvRr+p7MRjpPHt+AStvOc+nQ==;EndpointSuffix=core.windows.net"
+AZURE_CONNECTION_STRING = os.environ['AZURE_CONNECTION_STRING']
 AZURE_CONTAINER_NAME = "ams"
 AZURE_BLOB_DIRECTORY = "Market News/USDA Weekly Reports/"
 
@@ -26,9 +26,9 @@ headers = {
 def send_notification_email():
     smtp_server = "smtp.gmail.com"
     smtp_port = 587
-    sender_email = "marketnewsscript@gmail.com" 
-    sender_password = "gyrw yfxs skjj vtlb" 
-    recipient_email = "blakebradbeer@tamu.edu" 
+    sender_email = os.environ['GMAIL_USER']
+    sender_password = os.environ['GMAIL_PASSWORD'] 
+    recipient_email = os.environ['RECIPIENT'] 
 
     subject = "USDA Web Scraper Script Notification"
     body = "The USDA Web Scraper script has finished running."
@@ -110,4 +110,5 @@ print("[COMPLETE] All pages processed.")
 
 
 # === SEND EMAIL NOTIFICATION ===
+
 send_notification_email()
