@@ -10,9 +10,10 @@ NUM_PAGES = 5
 AZURE_CONNECTION_STRING = os.environ['AZURE_CONNECTION_STRING']
 AZURE_CONTAINER_NAME = "ams"
 AZURE_BLOB_DIRECTORY = "Market News/USDA Weekly Reports/"
+LAST_UPLOADED_BLOB = AZURE_BLOB_DIRECTORY + "last_uploaded.txt"
 
 headers = {
-    "User-Agent": "...",  # as before
+    "User-Agent": "...",  # Fill in as before
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "en-US,en;q=0.5",
@@ -27,8 +28,8 @@ def send_notification_email():
     smtp_server = "smtp.gmail.com"
     smtp_port = 587
     sender_email = os.environ['GMAIL_USER']
-    sender_password = os.environ['GMAIL_PASSWORD'] 
-    recipient_email = os.environ['RECIPIENT'] 
+    sender_password = os.environ['GMAIL_PASSWORD']
+    recipient_email = os.environ['RECIPIENT']
 
     subject = "USDA Web Scraper Script Notification"
     body = "The USDA Web Scraper script has finished running."
@@ -52,6 +53,18 @@ def send_notification_email():
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
 container_client = blob_service_client.get_container_client(AZURE_CONTAINER_NAME)
 
+# Read last_uploaded.txt from Azure
+uploaded_files = set()
+try:
+    blob_client = container_client.get_blob_client(LAST_UPLOADED_BLOB)
+    data = blob_client.download_blob().readall().decode('utf-8')
+    uploaded_files = set(line.strip() for line in data.splitlines() if line.strip())
+    print(f"[INFO] {len(uploaded_files)} files found in last_uploaded.txt")
+except Exception as e:
+    print(f"[INFO] last_uploaded.txt not found, assuming no files uploaded yet.")
+
+newly_uploaded = []
+
 for page in range(NUM_PAGES):
     page_url = BASE_URL.format(page)
     print(f"[PAGE {page+1}] Opening: {page_url}")
@@ -70,7 +83,6 @@ for page in range(NUM_PAGES):
         idx = html.find('.pdf', idx)
         if idx == -1:
             break
-        # Find start of href attribute (naive, but works for this site)
         start_quote = html.rfind('"', 0, idx)
         if html[start_quote-5:start_quote] == 'href=':
             link = html[start_quote+1:idx+4]
@@ -83,9 +95,14 @@ for page in range(NUM_PAGES):
         if not href.startswith('http'):
             href = "https://mymarketnews.ams.usda.gov" + href
         filename = os.path.basename(href)
+
+        if filename in uploaded_files:
+            print(f"[SKIP] Already in last_uploaded.txt: {filename}")
+            continue
+
         blob_path = AZURE_BLOB_DIRECTORY + filename
 
-        # Check if file already exists in Azure
+        # Check if file already exists in Azure (optional, can remove if relying only on last_uploaded.txt)
         exists = False
         try:
             container_client.get_blob_client(blob_path).get_blob_properties()
@@ -103,12 +120,23 @@ for page in range(NUM_PAGES):
             pdf_response.raise_for_status()
             container_client.upload_blob(name=blob_path, data=pdf_response.content, overwrite=True)
             print(f"[SUCCESS] Uploaded to Azure: {blob_path}")
+            newly_uploaded.append(filename)
         except Exception as e:
             print(f"[ERROR] Failed to download or upload {filename}: {e}")
 
+# Update last_uploaded.txt in Azure
+if newly_uploaded:
+    try:
+        all_uploaded = uploaded_files.union(newly_uploaded)
+        blob_client = container_client.get_blob_client(LAST_UPLOADED_BLOB)
+        blob_client.upload_blob("\n".join(all_uploaded), overwrite=True)
+        print("[INFO] last_uploaded.txt updated")
+    except Exception as e:
+        print(f"[ERROR] Failed to update last_uploaded.txt: {e}")
+else:
+    print("[INFO] No new files uploaded. last_uploaded.txt not updated.")
+
 print("[COMPLETE] All pages processed.")
 
-
 # === SEND EMAIL NOTIFICATION ===
-
 send_notification_email()
