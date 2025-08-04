@@ -1,0 +1,98 @@
+from azure.storage.blob import BlobServiceClient
+from datetime import datetime, timedelta
+import re
+import time
+
+# Azure connection info
+connection_string = 'DefaultEndpointsProtocol=https;AccountName=busercapstone;AccountKey=HMytooukQTL1Dt934A2jREt/+j7M/PpANxfIkg9LcxDH6ETB3BdD2beIInIBSCtvRr+p7MRjpPHt+AStvOc+nQ==;EndpointSuffix=core.windows.net'
+container_name = 'ams'
+folder = 'Market News/USDA Weekly Reports/'
+default_start_date = datetime.strptime('01-25-2023', '%m-%d-%Y')
+
+blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+container_client = blob_service_client.get_container_client(container_name)
+
+print("\nFiles in Azure BEFORE renaming (folder only):")
+for blob in container_client.list_blobs(name_starts_with=folder):
+    print(blob.name)
+
+# Gather AMS and National Hemp Report blobs
+all_blobs = list(container_client.list_blobs(name_starts_with=folder))
+ams_blobs = []
+national_blobs = []
+
+for blob in all_blobs:
+    filename = blob.name.split('/')[-1]
+    if filename.startswith('ams_3661_') and filename.endswith('.pdf'):
+        ams_blobs.append(blob.name)
+    elif filename.startswith('National Hemp Report') and filename.endswith('.pdf'):
+        national_blobs.append(blob.name)
+
+# Find all existing National Hemp Report dates
+date_pattern = re.compile(r'National Hemp Report (\d{2}-\d{2}-\d{4})\.pdf')
+dates = []
+for name in national_blobs:
+    match = date_pattern.search(name)
+    if match:
+        dates.append(datetime.strptime(match.group(1), "%m-%d-%Y"))
+
+# Sort AMS blobs and start date
+ams_blobs.sort()
+dates.sort()
+
+# Set the starting date
+if dates:
+    # Find the latest processed date
+    latest_date = max(dates)
+    next_date = latest_date + timedelta(weeks=1)
+    start_index = len(dates)
+else:
+    next_date = default_start_date
+    start_index = 0
+
+# Batch rename all unprocessed AMS files
+for i, blob_name in enumerate(ams_blobs[start_index:]):
+    current_date = next_date + timedelta(weeks=i)
+    new_file_name = f'National Hemp Report {current_date.strftime("%m-%d-%Y")}.pdf'
+    new_blob_name = folder + new_file_name
+
+    # Check if this National Hemp Report already exists
+    if new_blob_name in national_blobs:
+        print(f"Skipping {blob_name} (already renamed as {new_file_name})")
+        continue
+
+    print(f'\nCopying to: {new_blob_name}')
+    print(f'Source blob: {blob_name}')
+
+    source_blob = container_client.get_blob_client(blob_name)
+    new_blob = container_client.get_blob_client(new_blob_name)
+    print("Source blob URL:", source_blob.url)
+
+    copy_props = new_blob.start_copy_from_url(source_blob.url)
+
+    # Wait for the copy to finish
+    while True:
+        props = new_blob.get_blob_properties()
+        if props.copy.status == 'success':
+            print("Copy success!")
+            break
+        elif props.copy.status == 'failed':
+            print(f"Copy failed for {blob_name}! Reason: {props.copy.status_description}")
+            break
+        else:
+            print("Copy status:", props.copy.status)
+        time.sleep(1)
+
+    print("File processed and renamed.")
+    print("URL to new file:", new_blob.url)
+
+    # Delete AMS file after successful copy
+    try:
+        source_blob.delete_blob()
+        print(f"Deleted source blob: {blob_name}")
+    except Exception as e:
+        print(f"Error deleting {blob_name}: {e}")
+
+print("\nFiles in Azure AFTER renaming (folder only):")
+for blob in container_client.list_blobs(name_starts_with=folder):
+    print(blob.name)
