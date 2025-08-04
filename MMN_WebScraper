@@ -1,0 +1,113 @@
+import requests
+from azure.storage.blob import BlobServiceClient
+import os
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+BASE_URL = "https://mymarketnews.ams.usda.gov/filerepo/reports?field_slug_id_value=3661&page={}"
+NUM_PAGES = 5
+AZURE_CONNECTION_STRING = "DefaultEndpointsProtocol=https;AccountName=busercapstone;AccountKey=HMytooukQTL1Dt934A2jREt/+j7M/PpANxfIkg9LcxDH6ETB3BdD2beIInIBSCtvRr+p7MRjpPHt+AStvOc+nQ==;EndpointSuffix=core.windows.net"
+AZURE_CONTAINER_NAME = "ams"
+AZURE_BLOB_DIRECTORY = "Market News/USDA Weekly Reports/"
+
+headers = {
+    "User-Agent": "...",  # as before
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Referer": "https://mymarketnews.ams.usda.gov/",
+    # Add cookies from your browser if needed
+}
+
+# Email's script owner everytime script is ran.
+def send_notification_email():
+    smtp_server = "smtp.gmail.com"
+    smtp_port = 587
+    sender_email = "marketnewsscript@gmail.com" 
+    sender_password = "gyrw yfxs skjj vtlb" 
+    recipient_email = "blakebradbeer@tamu.edu" 
+
+    subject = "USDA Web Scraper Script Notification"
+    body = "The USDA Web Scraper script has finished running."
+
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = recipient_email
+    msg["Subject"] = subject
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, recipient_email, msg.as_string())
+        print("[EMAIL] Notification sent.")
+    except Exception as e:
+        print(f"[EMAIL ERROR] Failed to send email {e}")
+
+# === SETUP AZURE CLIENT ===
+blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
+container_client = blob_service_client.get_container_client(AZURE_CONTAINER_NAME)
+
+for page in range(NUM_PAGES):
+    page_url = BASE_URL.format(page)
+    print(f"[PAGE {page+1}] Opening: {page_url}")
+    try:
+        resp = requests.get(page_url, headers=headers, timeout=30)
+        print("[INFO] Page downloaded")
+    except Exception as e:
+        print(f"[ERROR] Failed to download page: {e}")
+        continue
+    html = resp.text
+
+    # --- Find all PDF links in the HTML ---
+    links = []
+    idx = 0
+    while True:
+        idx = html.find('.pdf', idx)
+        if idx == -1:
+            break
+        # Find start of href attribute (naive, but works for this site)
+        start_quote = html.rfind('"', 0, idx)
+        if html[start_quote-5:start_quote] == 'href=':
+            link = html[start_quote+1:idx+4]
+            links.append(link)
+        idx += 4
+
+    print(f"Found {len(links)} PDF links on page {page+1}")
+
+    for href in links:
+        if not href.startswith('http'):
+            href = "https://mymarketnews.ams.usda.gov" + href
+        filename = os.path.basename(href)
+        blob_path = AZURE_BLOB_DIRECTORY + filename
+
+        # Check if file already exists in Azure
+        exists = False
+        try:
+            container_client.get_blob_client(blob_path).get_blob_properties()
+            exists = True
+        except Exception:
+            pass
+
+        if exists:
+            print(f"[SKIP] Already exists in Azure: {blob_path}")
+            continue
+
+        print(f"[DOWNLOAD & UPLOAD] {filename}")
+        try:
+            pdf_response = requests.get(href, headers=headers, timeout=60)
+            pdf_response.raise_for_status()
+            container_client.upload_blob(name=blob_path, data=pdf_response.content, overwrite=True)
+            print(f"[SUCCESS] Uploaded to Azure: {blob_path}")
+        except Exception as e:
+            print(f"[ERROR] Failed to download or upload {filename}: {e}")
+
+print("[COMPLETE] All pages processed.")
+
+
+# === SEND EMAIL NOTIFICATION ===
+send_notification_email()
