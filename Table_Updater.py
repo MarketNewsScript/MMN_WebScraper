@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 
 # === CONFIGURATION ===
-azure_connection_string = 'DefaultEndpointsProtocol=https;AccountName=busercapstone;AccountKey=HMytooukQTL1Dt934A2jREt/+j7M/PpANxfIkg9LcxDH6ETB3BdD2beIInIBSCtvRr+p7MRjpPHt+AStvOc+nQ==;EndpointSuffix=core.windows.net'  
+azure_connection_string = os.environ['AZURE_CONNECTION_STRING']
 container_name = 'ams'
 account_name = 'busercapstone'
 folder_prefix = 'Market News/USDA Weekly Reports/'
@@ -124,4 +124,5 @@ html_content = f"""<!DOCTYPE html>
 # === UPLOAD HTML TO BLOB (OVERWRITE IF EXISTS) ===
 blob_client = container_client.get_blob_client(output_blob_path)
 blob_client.upload_blob(html_content, overwrite=True)
+
 print(f"HTML file generated and uploaded to {output_blob_path}")
