@@ -2,14 +2,13 @@ name: Weekly MMN Automation
 
 on:
   schedule:
-    # MMN_WebScraper: Every Thursday at 2:00 AM UTC (9:00 PM CST Wednesday, 10:00 PM CDT)
-    - cron: '0 2 * * 4'
-    # MMN_WebsiteUpdater: Every Thursday at 3:00 AM UTC (10:00 PM CST Wednesday, 11:00 PM CDT)
-    - cron: '0 3 * * 4'
+    - cron: '0 2 * * 4'   # Thursdays at 2:00 AM UTC
+    - cron: '0 3 * * 4'   # Thursdays at 3:00 AM UTC
+  workflow_dispatch:      # <-- This allows manual runs!
 
 jobs:
   run-scraper:
-    if: github.event.schedule == '0 2 * * 4'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 2 * * 4'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -28,7 +27,7 @@ jobs:
         run: python MMN_WebScraper.py
 
   run-updater:
-    if: github.event.schedule == '0 3 * * 4'
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 3 * * 4'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
