@@ -17,13 +17,18 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # or your required version
+          python-version: '3.11' # Or your required version
 
       - name: Install dependencies
         run: |
           pip install requests beautifulsoup4 selenium azure-storage-blob
 
       - name: Run MMN_WebScraper
+        env:
+          AZURE_CONNECTION_STRING: ${{ secrets.AZURE_CONNECTION_STRING }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          RECIPIENT: ${{ secrets.RECIPIENT }}
         run: python MMN_WebScraper.py
 
   run-updater:
@@ -36,11 +41,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # or your required version
+          python-version: '3.11' # Or your required version
 
       - name: Install dependencies
         run: |
           pip install requests beautifulsoup4 selenium azure-storage-blob
 
       - name: Run MMN_WebsiteUpdater
+        env:
+          AZURE_CONNECTION_STRING: ${{ secrets.AZURE_CONNECTION_STRING }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          RECIPIENT: ${{ secrets.RECIPIENT }}
         run: python MMN_WebsiteUpdater.py
