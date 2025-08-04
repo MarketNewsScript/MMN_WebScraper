@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '0 2 * * 4'   # Thursdays at 2:00 AM UTC
     - cron: '0 3 * * 4'   # Thursdays at 3:00 AM UTC
+    - cron: '0 4 * * 4'   # Thursdays at 4:00 AM UTC (NEW)
   workflow_dispatch:      # Allows manual runs
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Or your required version
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
@@ -41,7 +42,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Or your required version
+          python-version: '3.11'
 
       - name: Install dependencies
         run: |
@@ -54,3 +55,27 @@ jobs:
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           RECIPIENT: ${{ secrets.RECIPIENT }}
         run: python MMN_WebsiteUpdater.py
+
+  run-table-updater:
+    if: github.event_name == 'workflow_dispatch' || github.event.schedule == '0 4 * * 4'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install requests beautifulsoup4 selenium azure-storage-blob
+
+      - name: Run Table_updater
+        env:
+          AZURE_CONNECTION_STRING: ${{ secrets.AZURE_CONNECTION_STRING }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          RECIPIENT: ${{ secrets.RECIPIENT }}
+        run: python Table_updater.py
