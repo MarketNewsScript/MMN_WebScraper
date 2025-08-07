@@ -72,7 +72,7 @@ jobs:
         run: |
           pip install requests beautifulsoup4 selenium azure-storage-blob
 
-      - name: Run Table_updater
+      - name: Run Table_Updater
         env:
           AZURE_CONNECTION_STRING: ${{ secrets.AZURE_CONNECTION_STRING }}
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
