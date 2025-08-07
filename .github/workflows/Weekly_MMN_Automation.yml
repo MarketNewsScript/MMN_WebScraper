@@ -2,9 +2,9 @@ name: Weekly MMN Automation
 
 on:
   schedule:
-    - cron: '0 2 * * 4'   # Thursdays at 2:00 AM UTC
-    - cron: '0 3 * * 4'   # Thursdays at 3:00 AM UTC
-    - cron: '0 4 * * 4'   # Thursdays at 4:00 AM UTC (NEW)
+    - cron: '0 8 * * 4'   # Thursdays at 2:00 AM CST
+    - cron: '0 9 * * 4'   # Thursdays at 3:00 AM CST
+    - cron: '0 10 * * 4'   # Thursdays at 4:00 AM CST
   workflow_dispatch:      # Allows manual runs
 
 jobs:
