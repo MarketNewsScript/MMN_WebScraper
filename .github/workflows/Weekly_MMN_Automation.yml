@@ -78,4 +78,4 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           RECIPIENT: ${{ secrets.RECIPIENT }}
-        run: python Table_updater.py
+        run: python Table_Updater.py
