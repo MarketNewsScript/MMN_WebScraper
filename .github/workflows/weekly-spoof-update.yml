@@ -35,9 +35,8 @@ jobs:
           echo "pwd: $(pwd)"
           echo "Repo root contents:"
           ls -la
-          echo "MMN_WebScraper contents:"
-          ls -la MMN_WebScraper || true
-          test -f "MMN_WebScraper/edit_spoofing.py" && echo "Found edit_spoofing.py" || (echo "NOT FOUND" && exit 2)
+          test -f "edit_spoofing.py" && echo "Found edit_spoofing.py" || (echo "NOT FOUND" && exit 2)
+          test -f "MMN_WebScraper.py" && echo "Found MMN_WebScraper.py" || (echo "NOT FOUND" && exit 2)
 
       - name: Guard — only continue at 4:00 AM America/Chicago on Thursday
         id: guard
@@ -57,7 +56,7 @@ jobs:
         if: steps.guard.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           python -m pip install --upgrade pip
-          python MMN_WebScraper/edit_spoofing.py
+          python edit_spoofing.py
 
       - name: Commit & push if changed
         if: steps.guard.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
