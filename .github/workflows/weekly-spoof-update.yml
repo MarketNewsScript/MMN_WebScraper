@@ -1,0 +1,59 @@
+name: Weekly Spoof Header Update
+
+on:
+  workflow_dispatch: {}          # <-- manual runs enabled
+  schedule:
+    - cron: "0 9 * * 4"          # 4:00 AM Thu during CDT (UTC-5)
+    - cron: "0 10 * * 4"         # 4:00 AM Thu during CST (UTC-6)
+
+permissions:
+  contents: write
+
+jobs:
+  update-headers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Guard — only continue at 4:00 AM America/Chicago on Thursday
+        id: guard
+        run: |
+          python - << 'PY'
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+          now = datetime.now(ZoneInfo("America/Chicago"))
+          # Thu=3, require exactly 04:00
+          run = (now.weekday() == 3) and (now.hour == 4) and (now.minute == 0)
+          print(f"Local time (America/Chicago): {now.isoformat()}")
+          with open("$GITHUB_OUTPUT", "a") as f:
+              f.write(f"run={'true' if run else 'false'}\n")
+          PY
+
+      - name: Run editor
+        if: steps.guard.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          python -m pip install --upgrade pip
+          python tools/edit_spoofing.py
+
+      - name: Commit & push if changed
+        if: steps.guard.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: rotate spoofing headers"
+            git push
+          else
+            echo "No changes to commit."
+          fi
