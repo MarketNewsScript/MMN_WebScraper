@@ -32,7 +32,6 @@ jobs:
           from datetime import datetime
           from zoneinfo import ZoneInfo
           now = datetime.now(ZoneInfo("America/Chicago"))
-          # Thu=3, require exactly 04:00
           run = (now.weekday() == 3) and (now.hour == 4) and (now.minute == 0)
           print(f"Local time (America/Chicago): {now.isoformat()}")
           with open("$GITHUB_OUTPUT", "a") as f:
@@ -43,7 +42,7 @@ jobs:
         if: steps.guard.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           python -m pip install --upgrade pip
-          python tools/edit_spoofing.py
+          python MMN_WebScraper/edit_spoofing.py
 
       - name: Commit & push if changed
         if: steps.guard.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
