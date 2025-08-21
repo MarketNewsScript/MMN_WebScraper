@@ -1,13 +1,17 @@
 name: Weekly Spoof Header Update
 
 on:
-  workflow_dispatch: {}          # <-- manual runs enabled
+  workflow_dispatch: {}          # allow manual runs
   schedule:
     - cron: "0 9 * * 4"          # 4:00 AM Thu during CDT (UTC-5)
     - cron: "0 10 * * 4"         # 4:00 AM Thu during CST (UTC-6)
 
 permissions:
   contents: write
+
+concurrency:
+  group: weekly-spoof-update
+  cancel-in-progress: false
 
 jobs:
   update-headers:
@@ -25,6 +29,16 @@ jobs:
         with:
           python-version: "3.11"
 
+      # Optional: helpful when debugging path issues
+      - name: Print workspace and tree
+        run: |
+          echo "pwd: $(pwd)"
+          echo "Repo root contents:"
+          ls -la
+          echo "MMN_WebScraper contents:"
+          ls -la MMN_WebScraper || true
+          test -f "MMN_WebScraper/edit_spoofing.py" && echo "Found edit_spoofing.py" || (echo "NOT FOUND" && exit 2)
+
       - name: Guard — only continue at 4:00 AM America/Chicago on Thursday
         id: guard
         run: |
@@ -32,13 +46,14 @@ jobs:
           from datetime import datetime
           from zoneinfo import ZoneInfo
           now = datetime.now(ZoneInfo("America/Chicago"))
+          # Thursday=3; require exactly 04:00
           run = (now.weekday() == 3) and (now.hour == 4) and (now.minute == 0)
           print(f"Local time (America/Chicago): {now.isoformat()}")
           with open("$GITHUB_OUTPUT", "a") as f:
               f.write(f"run={'true' if run else 'false'}\n")
           PY
 
-      - name: Run editor
+      - name: Run editor (manual OR scheduled at 4am local)
         if: steps.guard.outputs.run == 'true' || github.event_name == 'workflow_dispatch'
         run: |
           python -m pip install --upgrade pip
