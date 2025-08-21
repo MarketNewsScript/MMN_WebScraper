@@ -8,7 +8,7 @@ import hashlib
 
 # === CONFIG ===
 # Path to Original Script
-TARGET_FILE = Path("MMN_WebScraper/MMN_WebScraper.py")
+TARGET_FILE = Path("MMN_WebScraper.py")
 
 # Header fields to update
 USER_AGENT_KEY = r'"User-Agent"'
@@ -69,3 +69,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
