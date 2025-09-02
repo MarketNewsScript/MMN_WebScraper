@@ -23,16 +23,18 @@ AZURE_BLOB_DIRECTORY = "Market News/USDA Weekly Reports/"
 LATEST_SEEN_BLOB = AZURE_BLOB_DIRECTORY + "latest_seen.txt"
 
 # Timeouts: (connect, read)
-CONNECT_TIMEOUT = 10
-READ_TIMEOUT = 90
+CONNECT_TIMEOUT = 8
+READ_TIMEOUT = 45
 TIMEOUT: Tuple[int, int] = (CONNECT_TIMEOUT, READ_TIMEOUT)
 
-# Backoff / retry policy
-RETRIES_TOTAL = 8           # total attempts per request (incl. initial)
-BACKOFF_FACTOR = 1.6        # exponential backoff base
+# Backoff / retry policy (shorter so we fail fast)
+RETRIES_TOTAL = 3
+BACKOFF_FACTOR = 1.5
 STATUS_FORCELIST = (429, 500, 502, 503, 504)
 
-# Headers — avoid 'br' to not require brotli support
+# Hard overall watchdog: kill the run if it exceeds this many seconds
+GLOBAL_DEADLINE_SECONDS = 180
+
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -50,7 +52,6 @@ def send_notification_email():
     sender_email = os.environ['GMAIL_USER']
     sender_password = os.environ['GMAIL_PASSWORD']
     recipient_email = os.environ['RECIPIENT']
-
     subject = "USDA Web Scraper Script Notification"
     body = "The USDA Web Scraper script has finished running."
 
@@ -69,13 +70,22 @@ def send_notification_email():
     except Exception as e:
         print(f"[EMAIL ERROR] Failed to send email {e}")
 
+# === WATCHDOG ===
+START_TS = time.time()
+def time_left() -> float:
+    return GLOBAL_DEADLINE_SECONDS - (time.time() - START_TS)
+
+def check_deadline(point: str=""):
+    left = time_left()
+    if left <= 0:
+        raise TimeoutError(f"Global deadline exceeded while {point or 'running'} (>{GLOBAL_DEADLINE_SECONDS}s).")
+
 # === HTTP SESSION WITH RETRIES ===
 def build_session() -> requests.Session:
     retry = Retry(
         total=RETRIES_TOTAL,
         connect=RETRIES_TOTAL,
         read=RETRIES_TOTAL,
-        # Retry on the common transient HTTP codes + on timeouts
         status=RETRIES_TOTAL,
         backoff_factor=BACKOFF_FACTOR,
         status_forcelist=STATUS_FORCELIST,
@@ -93,19 +103,11 @@ def build_session() -> requests.Session:
 session = build_session()
 
 def get_with_jitter(url: str, *, stream: bool=False) -> requests.Response:
-    # small random delay to look less botty and not slam the server
-    time.sleep(random.uniform(0.8, 2.2))
-    try:
-        resp = session.get(url, timeout=TIMEOUT, stream=stream)
-        resp.raise_for_status()
-        return resp
-    except requests.exceptions.ReadTimeout as e:
-        # Provide clearer diagnostics in logs
-        raise RuntimeError(f"Read timeout fetching {url} (connect={CONNECT_TIMEOUT}s, read={READ_TIMEOUT}s)") from e
-    except requests.exceptions.ConnectTimeout as e:
-        raise RuntimeError(f"Connect timeout fetching {url}") from e
-    except requests.RequestException as e:
-        raise RuntimeError(f"HTTP error fetching {url}: {e}") from e
+    check_deadline(f"fetching {url}")
+    time.sleep(random.uniform(0.4, 1.2))
+    resp = session.get(url, timeout=TIMEOUT, stream=stream, allow_redirects=True)
+    resp.raise_for_status()
+    return resp
 
 # === AZURE ===
 blob_service_client = BlobServiceClient.from_connection_string(AZURE_CONNECTION_STRING)
@@ -128,12 +130,9 @@ def normalize_filename_from_url(url: str) -> str:
     name = os.path.basename(path)
     return unquote(name)
 
-def scrape_latest_detail_and_pdf():
-    # 1) Fetch the list page (with retries/backoff)
-    r = get_with_jitter(LIST_URL)
-    soup = BeautifulSoup(r.text, "html.parser")
-
-    # 2) Find the first (latest) row
+# === CORE SCRAPE (requests) ===
+def parse_list_html(html: str):
+    soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table")
     if not table:
         raise RuntimeError("Could not find table on list page.")
@@ -141,62 +140,107 @@ def scrape_latest_detail_and_pdf():
     first_row = tbody.find("tr")
     if not first_row:
         raise RuntimeError("No rows found on list page.")
+    return first_row
 
-    # Extract a report date if present
-    tds = first_row.find_all("td")
-    report_date_str = None
+def extract_date_from_row(row) -> Optional[str]:
+    tds = row.find_all("td")
     for td in tds:
-        m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b|\b(\d{2}-\d{2}-\d{4})\b", td.get_text(strip=True))
+        txt = td.get_text(strip=True)
+        m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b|\b(\d{2}-\d{2}-\d{4})\b", txt)
         if m:
-            report_date_str = m.group(1) or m.group(2)
-            break
+            ds = m.group(1) or m.group(2)
+            if re.match(r"\d{4}-\d{2}-\d{2}", ds):
+                y, mm, dd = ds.split("-")
+                return f"{mm}-{dd}-{y}"
+            return ds
+    return None
 
-    # Convert YYYY-MM-DD -> MM-DD-YYYY for filename if needed
-    if report_date_str and re.match(r"\d{4}-\d{2}-\d{2}", report_date_str):
-        y, mm, dd = report_date_str.split("-")
-        report_date_str = f"{mm}-{dd}-{y}"
-
-    # 3) Find "view report" link in that row
+def extract_detail_url_from_row(row) -> str:
     detail_a = None
-    for a in first_row.find_all("a", href=True):
+    for a in row.find_all("a", href=True):
         if (a.get_text() or "").strip().lower() == "view report":
             detail_a = a
             break
     if not detail_a:
-        links = first_row.find_all("a", href=True)
+        links = row.find_all("a", href=True)
         if not links:
             raise RuntimeError("No links in latest row.")
         detail_a = links[-1]
+    return urljoin(BASE, detail_a["href"])
 
-    detail_url = urljoin(BASE, detail_a["href"])
-
-    # 4) Fetch detail page and locate the single PDF link
-    dr = get_with_jitter(detail_url)
-    dsoup = BeautifulSoup(dr.text, "html.parser")
+def extract_pdf_from_detail_html(html: str) -> str:
+    dsoup = BeautifulSoup(html, "html.parser")
     pdf_a = dsoup.find("a", href=lambda h: h and h.lower().endswith(".pdf"))
     if not pdf_a:
         raise RuntimeError("Could not find PDF link on detail page.")
-    pdf_url = urljoin(BASE, pdf_a["href"])
+    return urljoin(BASE, pdf_a["href"])
 
-    # 5) Determine target filename (prefer pretty name)
-    if report_date_str:
-        filename = f"National Hemp Report {report_date_str}.pdf"
-    else:
-        filename = normalize_filename_from_url(pdf_url)
-
+def scrape_with_requests():
+    r = get_with_jitter(LIST_URL)
+    row = parse_list_html(r.text)
+    report_date_str = extract_date_from_row(row)
+    detail_url = extract_detail_url_from_row(row)
+    dr = get_with_jitter(detail_url)
+    pdf_url = extract_pdf_from_detail_html(dr.text)
+    filename = f"National Hemp Report {report_date_str}.pdf" if report_date_str else normalize_filename_from_url(pdf_url)
     return detail_url, pdf_url, filename
 
+# === SELENIUM FALLBACK (headless Chrome w/ stealth) ===
+def scrape_with_selenium():
+    check_deadline("initializing Selenium")
+    import undetected_chromedriver as uc
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+
+    opts = uc.ChromeOptions()
+    opts.add_argument("--headless=new")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--window-size=1200,2000")
+
+    driver = uc.Chrome(options=opts)
+    try:
+        driver.get(LIST_URL)
+        WebDriverWait(driver, min(30, int(max(5, time_left())))).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr"))
+        )
+        html = driver.page_source
+        row = parse_list_html(html)
+        report_date_str = extract_date_from_row(row)
+        detail_url = extract_detail_url_from_row(row)
+
+        driver.get(detail_url)
+        WebDriverWait(driver, min(30, int(max(5, time_left())))).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "a[href$='.pdf']"))
+        )
+        html2 = driver.page_source
+        pdf_url = extract_pdf_from_detail_html(html2)
+        filename = f"National Hemp Report {report_date_str}.pdf" if report_date_str else normalize_filename_from_url(pdf_url)
+        return detail_url, pdf_url, filename
+    finally:
+        driver.quit()
+
+def scrape_latest_detail_and_pdf():
+    # Try requests twice quickly; if still failing, switch to Selenium
+    for attempt in range(2):
+        try:
+            check_deadline("scrape_with_requests")
+            return scrape_with_requests()
+        except Exception as e:
+            print(f"[WARN] requests scrape attempt {attempt+1} failed: {e}")
+            time.sleep(1.0)
+
+    print("[INFO] Falling back to Selenium (headless)")
+    return scrape_with_selenium()
+
 def main():
+    print(f"[INFO] Global watchdog: {GLOBAL_DEADLINE_SECONDS}s")
     latest_seen = read_latest_seen()
     print(f"[INFO] latest_seen: {latest_seen!r}")
 
-    try:
-        detail_url, pdf_url, filename = scrape_latest_detail_and_pdf()
-    except Exception as e:
-        # Make the failure obvious in logs so Actions shows why the job failed
-        print(f"[FATAL] Failed to scrape latest detail/pdf: {e}")
-        raise
-
+    detail_url, pdf_url, filename = scrape_latest_detail_and_pdf()
     print(f"[LATEST] detail={detail_url}")
     print(f"[LATEST] pdf={pdf_url}")
     print(f"[LATEST] target filename={filename}")
@@ -223,15 +267,20 @@ def main():
         send_notification_email()
         return
 
-    # Download with retry & stream disabled (we want full content in memory)
-    try:
-        pr = get_with_jitter(pdf_url)
-    except Exception as e:
-        print(f"[FATAL] Failed to download PDF: {e}")
-        raise
-
-    container_client.upload_blob(name=blob_path, data=pr.content, overwrite=True)
-    print(f"[SUCCESS] Uploaded to Azure: {blob_path}")
+    # Download PDF (requests; if it fails once, try again, then fail fast)
+    for attempt in range(2):
+        try:
+            check_deadline("downloading PDF")
+            pr = get_with_jitter(pdf_url)
+            container_client.upload_blob(name=blob_path, data=pr.content, overwrite=True)
+            print(f"[SUCCESS] Uploaded to Azure: {blob_path}")
+            break
+        except Exception as e:
+            if attempt == 0:
+                print(f"[WARN] PDF download attempt 1 failed: {e}; retrying...")
+                time.sleep(1.0)
+            else:
+                raise RuntimeError(f"Failed to download/upload PDF after retries: {e}")
 
     # Update latest marker
     write_latest_seen(pdf_url)
